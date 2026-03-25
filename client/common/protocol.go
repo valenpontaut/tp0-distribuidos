@@ -8,30 +8,45 @@ import (
 )
 
 const headerSize = 4
+const maxChunkSize = 8 * 1024
 
-// sends a length-prefixed message over conn: 4-byte big-endian payload size followed by the bet fields joined by '|'
+// sends a batch of bets as a single length-prefixed message over conn: 4-byte big-endian payload size followed by the bet fields joined by '|'
+// Sent in chunks of at most 8KB to avoid large writes
 // Uses sendAll to avoid short-writes
-func SendBet(conn net.Conn, clientID string, bet BetInfo) error {
-	payload := strings.Join([]string{
-		clientID,
-		bet.nombre,
-		bet.apellido,
-		bet.dni,
-		bet.nacimiento,
-		bet.numero,
-	}, "|")
+func SendBatch(conn net.Conn, clientID string, bets []BetInfo) error {
+	payload := encodeBets(clientID, bets)
 
-	data := []byte(payload)
 	header := make([]byte, headerSize)
-	binary.BigEndian.PutUint32(header, uint32(len(data)))
+	binary.BigEndian.PutUint32(header, uint32(len(payload)))
 
 	if err := sendAll(conn, header); err != nil {
 		return fmt.Errorf("failed to send length header: %w", err)
 	}
-	if err := sendAll(conn, data); err != nil {
+	if err := sendAll(conn, payload); err != nil {
 		return fmt.Errorf("failed to send payload: %w", err)
 	}
 	return nil
+}
+
+// serializes all bets into a flat '|' separated payload
+// The server reads clientID once (first field) then groups remaining fields by 5.
+func encodeBets(clientID string, bets []BetInfo) []byte {
+	fields := []string{clientID}
+	for _, bet := range bets {
+		fields = append(fields, bet.nombre, bet.apellido, bet.dni, bet.nacimiento, bet.numero)
+	}
+	return []byte(strings.Join(fields, "|"))
+}
+
+// SendEOF signals the server that the client has finished sending all batches.
+func SendEOF(conn net.Conn) error {
+	data := []byte("EOF")
+	header := make([]byte, headerSize)
+	binary.BigEndian.PutUint32(header, uint32(len(data)))
+	if err := sendAll(conn, header); err != nil {
+		return err
+	}
+	return sendAll(conn, data)
 }
 
 // reads a length-prefixed response from the server
@@ -50,11 +65,15 @@ func RecvConfirmation(conn net.Conn) (string, error) {
 	return string(buf), nil
 }
 
-// sendAll loops over conn.Write until all bytes are sent, avoiding short-writes.
+// sendAll loops over conn.Write in chunks of at most maxChunkSize, avoiding short-writes.
 func sendAll(conn net.Conn, data []byte) error {
 	sent := 0
 	for sent < len(data) {
-		n, err := conn.Write(data[sent:])
+		end := sent + maxChunkSize
+		if end > len(data) {
+			end = len(data)
+		}
+		n, err := conn.Write(data[sent:end])
 		if err != nil {
 			return err
 		}

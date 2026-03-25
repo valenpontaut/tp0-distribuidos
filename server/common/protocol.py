@@ -4,16 +4,25 @@ from common.bet import BetInfo
 HEADER_SIZE = 4
 
 
-def recv_bet(sock) -> BetInfo:
-    """Receives a length-prefixed bet message. Reads exactly 4 bytes for the
-    header, then exactly length bytes for the payload 
-    Uses recv_all to avoid short-reads."""
+def recv_batch(sock):
+    """Receives a length-prefixed batch message and returns a list of BetInfo.
+    Returns None if the client sent an EOF signal indicating it is done."""
     header = recv_all(sock, HEADER_SIZE)
     length = struct.unpack('!I', header)[0]
     payload = recv_all(sock, length).decode('utf-8')
 
-    agency, nombre, apellido, dni, nacimiento, numero = payload.split('|')
-    return BetInfo(agency, nombre, apellido, dni, nacimiento, numero)
+    if payload == "EOF":
+        return None
+
+    fields = payload.split('|')
+    agency = fields[0]
+    bet_fields = fields[1:]
+
+    bets = []
+    for i in range(0, len(bet_fields), 5):
+        nombre, apellido, dni, nacimiento, numero = bet_fields[i:i+5]
+        bets.append(BetInfo(agency, nombre, apellido, dni, nacimiento, numero))
+    return bets
 
 
 def send_confirmation(sock, message: str):
