@@ -56,7 +56,6 @@ class Server:
                     break
 
                 if bets_info is None:
-                    logging.info("action: recv_batch | result: EOF received | closing connection")
                     break
 
                 bets = [Bet(b.agency, b.nombre, b.apellido, b.dni, b.nacimiento, b.numero)
