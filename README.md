@@ -157,7 +157,7 @@ Los datos de la apuesta se leen de variables de entorno (`NOMBRE`, `APELLIDO`, `
 
 Para evitar short-writes, `sendAll` loopea sobre `conn.Write` hasta enviar todos los bytes. Para evitar short-reads, `recvAll` loopea sobre `conn.Read` hasta llenar el buffer completo.
 
-Si el servidor no está disponible al momento de conectar, el cliente reintenta hasta 5 veces con 1 segundo de espera entre intentos.
+Si el servidor no está disponible al momento de conectar, el cliente reintenta hasta `loop.amount` veces con `loop.period` de espera entre intentos (configurables en `config.yaml`).
 
 Al recibir la confirmación del servidor se imprime:
 ```
