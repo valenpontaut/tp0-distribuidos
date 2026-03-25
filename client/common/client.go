@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -57,7 +58,7 @@ func (c *Client) createClientSocket() error {
 	return fmt.Errorf("could not connect to server after %d attempts", c.config.LoopAmount)
 }
 
-// StartClientLoop reads bets from the agency CSV in batches and sends each batch to the server.
+// StartClientLoop sends all bets to the server and then queries the lottery winners.
 func (c *Client) StartClientLoop() {
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, syscall.SIGTERM)
@@ -69,8 +70,48 @@ func (c *Client) StartClientLoop() {
 	}
 	defer reader.Close()
 
-	if err := c.createClientSocket(); err != nil {
+	if !c.sendAllBets(sigterm, reader) {
 		return
+	}
+
+	c.queryWinners()
+}
+
+// queryWinners loops querying the server for winners until the sorteo is ready.
+func (c *Client) queryWinners() {
+	for {
+		if err := c.createClientSocket(); err != nil {
+			return
+		}
+		if err := SendWinnersQuery(c.conn, c.config.ID); err != nil {
+			c.conn.Close()
+			log.Errorf("action: consulta_ganadores | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			return
+		}
+		response, err := RecvMessage(c.conn)
+		c.conn.Close()
+		if err != nil {
+			log.Errorf("action: consulta_ganadores | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			return
+		}
+		if response == "WAIT" {
+			time.Sleep(c.config.LoopPeriod)
+			continue
+		}
+		winners := []string{}
+		if response != "" {
+			winners = strings.Split(response, "|")
+		}
+		log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v", len(winners))
+		return
+	}
+}
+
+// sendAllBets connects to the server, sends all bets in batches, and signals EOF when done.
+// Returns true if all bets were sent successfully.
+func (c *Client) sendAllBets(sigterm <-chan os.Signal, reader *AgencyReader) bool {
+	if err := c.createClientSocket(); err != nil {
+		return false
 	}
 	defer c.conn.Close()
 
@@ -78,14 +119,14 @@ func (c *Client) StartClientLoop() {
 		select {
 		case <-sigterm:
 			log.Infof("action: shutdown | result: success | client_id: %v", c.config.ID)
-			return
+			return false
 		default:
 		}
 
 		batch, err := reader.NextBatch(c.config.MaxAmount)
 		if err != nil {
 			log.Errorf("action: read_batch | result: fail | client_id: %v | error: %v", c.config.ID, err)
-			return
+			return false
 		}
 		if len(batch) == 0 {
 			break
@@ -93,17 +134,17 @@ func (c *Client) StartClientLoop() {
 
 		if err := SendBatch(c.conn, c.config.ID, batch); err != nil {
 			log.Errorf("action: send_batch | result: fail | client_id: %v | error: %v", c.config.ID, err)
-			return
+			return false
 		}
 
-		confirmation, err := RecvConfirmation(c.conn)
+		confirmation, err := RecvMessage(c.conn)
 		if err != nil {
 			log.Errorf("action: recibir_confirmacion | result: fail | client_id: %v | error: %v", c.config.ID, err)
-			return
+			return false
 		}
 		if confirmation != "OK" {
 			log.Errorf("action: recibir_confirmacion | result: fail | client_id: %v | msg: %v", c.config.ID, confirmation)
-			return
+			return false
 		}
 
 		log.Infof("action: apuesta_enviada | result: success | cantidad: %v", len(batch))
@@ -111,7 +152,7 @@ func (c *Client) StartClientLoop() {
 
 	if err := SendEOF(c.conn); err != nil {
 		log.Errorf("action: send_eof | result: fail | client_id: %v | error: %v", c.config.ID, err)
-		return
+		return false
 	}
-	log.Infof("action: loop_finished | result: success | client_id: %v", c.config.ID)
+	return true
 }
