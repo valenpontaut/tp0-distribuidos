@@ -123,3 +123,52 @@ El loop principal se cambió de `while True` a `while self._running`, de modo qu
 
 ### Ejercicio 5
 
+Se modificó la lógica de cliente y servidor para implementar el caso de uso de la Lotería Nacional, donde cada cliente representa una agencia de quiniela que envía una apuesta al servidor central.
+
+#### Protocolo de comunicación
+
+Se implementó un protocolo **length-prefixed** para evitar los fenómenos de short-read y short-write propios de TCP:
+
+```
+[ 4 bytes: uint32 big-endian con el largo del payload ][ payload ]
+```
+
+El payload serializa los campos de la apuesta separados por `|`:
+
+```
+ID|NOMBRE|APELLIDO|DNI|NACIMIENTO|NUMERO
+```
+
+Este diseño garantiza que el receptor sepa exactamente cuántos bytes leer sin depender de delimitadores finales ni de que TCP entregue los datos en un único bloque.
+
+#### Separación de responsabilidades
+
+Se crearon módulos dedicados para separar dominio de comunicación:
+
+- `bet.go` / `bet.py`: struct/dataclass `BetInfo` con los campos de la apuesta, sin conocimiento de red
+- `protocol.go` / `protocol.py`: funciones de serialización y comunicación (`SendBet`, `RecvConfirmation` en Go; `recv_bet`, `send_confirmation` en Python)
+
+#### Cliente (Go)
+
+Los datos de la apuesta se leen de variables de entorno (`NOMBRE`, `APELLIDO`, `DOCUMENTO`, `NACIMIENTO`, `NUMERO`) al iniciar, con validación de tipos:
+
+- `DOCUMENTO` y `NUMERO` deben ser enteros válidos
+- `NACIMIENTO` debe tener formato `YYYY-MM-DD`
+
+Para evitar short-writes, `sendAll` loopea sobre `conn.Write` hasta enviar todos los bytes. Para evitar short-reads, `recvAll` loopea sobre `conn.Read` hasta llenar el buffer completo.
+
+Si el servidor no está disponible al momento de conectar, el cliente reintenta hasta 5 veces con 1 segundo de espera entre intentos.
+
+Al recibir la confirmación del servidor se imprime:
+```
+action: apuesta_enviada | result: success | dni: ${DNI} | numero: ${NUMERO}
+```
+
+#### Servidor (Python)
+
+Recibe la apuesta, construye un objeto `Bet` con los campos deserializados y lo persiste mediante `store_bets()`. El mismo mecanismo de `send_all`/`recv_all` se aplica en Python para garantizar envíos y recepciones completas.
+
+Al persistir la apuesta se imprime:
+```
+action: apuesta_almacenada | result: success | dni: ${DNI} | numero: ${NUMERO}
+```
