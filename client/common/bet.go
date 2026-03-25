@@ -2,7 +2,6 @@ package common
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"strconv"
 )
@@ -17,13 +16,8 @@ type BetInfo struct {
 
 var nacimientoRegex = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
-func NewBetFromEnv() (BetInfo, error) {
-	nombre := os.Getenv("NOMBRE")
-	apellido := os.Getenv("APELLIDO")
-	dni := os.Getenv("DOCUMENTO")
-	nacimiento := os.Getenv("NACIMIENTO")
-	numero := os.Getenv("NUMERO")
-
+// NewBetInfo validates the given fields and returns a BetInfo.
+func NewBetInfo(nombre, apellido, dni, nacimiento, numero string) (BetInfo, error) {
 	if _, err := strconv.Atoi(dni); err != nil {
 		return BetInfo{}, fmt.Errorf("DOCUMENTO inválido: %q", dni)
 	}

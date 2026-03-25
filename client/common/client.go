@@ -19,6 +19,7 @@ type ClientConfig struct {
 	ServerAddress string
 	LoopAmount    int
 	LoopPeriod    time.Duration
+	MaxAmount     int
 }
 
 // Client Entity that encapsulates how
@@ -56,38 +57,61 @@ func (c *Client) createClientSocket() error {
 	return fmt.Errorf("could not connect to server after %d attempts", c.config.LoopAmount)
 }
 
-// StartClientLoop Send messages to the client until some time threshold is met
+// StartClientLoop reads bets from the agency CSV in batches and sends each batch to the server.
 func (c *Client) StartClientLoop() {
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, syscall.SIGTERM)
 
-	bet, err := NewBetFromEnv()
+	reader, err := NewAgencyReader(c.config.ID)
 	if err != nil {
-		log.Criticalf("action: apuesta_leida | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		log.Criticalf("action: open_agency_file | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return
 	}
-
-	select {
-	case <-sigterm:
-		log.Infof("action: shutdown | result: success | client_id: %v", c.config.ID)
-		return
-	default:
-	}
+	defer reader.Close()
 
 	if err := c.createClientSocket(); err != nil {
 		return
 	}
 	defer c.conn.Close()
 
-	if err := SendBet(c.conn, c.config.ID, bet); err != nil {
-		log.Errorf("action: apuesta_enviada | result: fail | client_id: %v | error: %v", c.config.ID, err)
-		return
+	for {
+		select {
+		case <-sigterm:
+			log.Infof("action: shutdown | result: success | client_id: %v", c.config.ID)
+			return
+		default:
+		}
+
+		batch, err := reader.NextBatch(c.config.MaxAmount)
+		if err != nil {
+			log.Errorf("action: read_batch | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			return
+		}
+		if len(batch) == 0 {
+			break
+		}
+
+		if err := SendBatch(c.conn, c.config.ID, batch); err != nil {
+			log.Errorf("action: send_batch | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			return
+		}
+
+		confirmation, err := RecvConfirmation(c.conn)
+		if err != nil {
+			log.Errorf("action: recibir_confirmacion | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			return
+		}
+		if confirmation != "OK" {
+			log.Errorf("action: recibir_confirmacion | result: fail | client_id: %v | msg: %v", c.config.ID, confirmation)
+			return
+		}
+
+		log.Infof("action: apuesta_enviada | result: success | cantidad: %v", len(batch))
 	}
 
-	if _, err := RecvConfirmation(c.conn); err != nil {
-		log.Errorf("action: recibir_confirmacion | result: fail | client_id: %v | error: %v", c.config.ID, err)
+	if err := SendEOF(c.conn); err != nil {
+		log.Errorf("action: send_eof | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return
 	}
-
-	log.Infof("action: apuesta_enviada | result: success | dni: %v | numero: %v", bet.dni, bet.numero)
+	log.Infof("action: loop_finished | result: success | client_id: %v", c.config.ID)
 }

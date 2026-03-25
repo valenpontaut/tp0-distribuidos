@@ -1,7 +1,7 @@
 import socket
 import logging
 import signal
-from common.protocol import recv_bet, send_confirmation
+from common.protocol import recv_batch, send_confirmation
 from common.utils import Bet, store_bets
 
 
@@ -48,15 +48,25 @@ class Server:
         client socket will also be closed
         """
         try:
-            bet_info = recv_bet(client_sock)
-            bet = Bet(bet_info.agency, bet_info.nombre, bet_info.apellido,
-                      bet_info.dni, bet_info.nacimiento, bet_info.numero)
-            store_bets([bet])
+            while True:
+                try:
+                    bets_info = recv_batch(client_sock)
+                except OSError:
+                    logging.warning("action: recv_batch | result: client disconnected unexpectedly")
+                    break
 
-            logging.info(f'action: apuesta_almacenada | result: success | dni: {bet_info.dni} | numero: {bet_info.numero}')
-            send_confirmation(client_sock, "OK")
-        except OSError as e:
-            logging.error(f"action: apuesta_almacenada | result: fail | error: {e}")
+                if bets_info is None:
+                    break
+
+                bets = [Bet(b.agency, b.nombre, b.apellido, b.dni, b.nacimiento, b.numero)
+                        for b in bets_info]
+                try:
+                    store_bets(bets)
+                    logging.info(f'action: apuesta_recibida | result: success | cantidad: {len(bets)}')
+                    send_confirmation(client_sock, "OK")
+                except Exception as e:
+                    logging.error(f'action: apuesta_recibida | result: fail | cantidad: {len(bets)} | error: {e}')
+                    send_confirmation(client_sock, "ERROR")
         finally:
             client_sock.close()
 
