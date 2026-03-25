@@ -7,7 +7,6 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/op/go-logging"
 )
@@ -77,34 +76,27 @@ func (c *Client) StartClientLoop() {
 	c.queryWinners()
 }
 
-// queryWinners loops querying the server for winners until the sorteo is ready.
+// queryWinners connects to the server, requests winners, and blocks until the server responds.
 func (c *Client) queryWinners() {
-	for {
-		if err := c.createClientSocket(); err != nil {
-			return
-		}
-		if err := SendWinnersQuery(c.conn, c.config.ID); err != nil {
-			c.conn.Close()
-			log.Errorf("action: consulta_ganadores | result: fail | client_id: %v | error: %v", c.config.ID, err)
-			return
-		}
-		response, err := RecvMessage(c.conn)
-		c.conn.Close()
-		if err != nil {
-			log.Errorf("action: consulta_ganadores | result: fail | client_id: %v | error: %v", c.config.ID, err)
-			return
-		}
-		if response == "WAIT" {
-			time.Sleep(c.config.LoopPeriod)
-			continue
-		}
-		winners := []string{}
-		if response != "" {
-			winners = strings.Split(response, "|")
-		}
-		log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v", len(winners))
+	if err := c.createClientSocket(); err != nil {
 		return
 	}
+	defer c.conn.Close()
+
+	if err := SendWinnersQuery(c.conn, c.config.ID); err != nil {
+		log.Errorf("action: consulta_ganadores | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		return
+	}
+	response, err := RecvMessage(c.conn)
+	if err != nil {
+		log.Errorf("action: consulta_ganadores | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		return
+	}
+	winners := []string{}
+	if response != "" {
+		winners = strings.Split(response, "|")
+	}
+	log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v", len(winners))
 }
 
 // sendAllBets connects to the server, sends all bets in batches, and signals EOF when done.
