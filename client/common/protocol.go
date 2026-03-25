@@ -49,9 +49,20 @@ func SendEOF(conn net.Conn) error {
 	return sendAll(conn, data)
 }
 
+// SendWinnersQuery sends a winner query for the given agency to the server
+func SendWinnersQuery(conn net.Conn, agencyID string) error {
+	data := []byte("WINNERS|" + agencyID)
+	header := make([]byte, headerSize)
+	binary.BigEndian.PutUint32(header, uint32(len(data)))
+	if err := sendAll(conn, header); err != nil {
+		return err
+	}
+	return sendAll(conn, data)
+}
+
 // reads a length-prefixed response from the server
 // Uses recvAll to avoid short-reads
-func RecvConfirmation(conn net.Conn) (string, error) {
+func RecvMessage(conn net.Conn) (string, error) {
 	header := make([]byte, headerSize)
 	if err := recvAll(conn, header); err != nil {
 		return "", fmt.Errorf("failed to read length header: %w", err)
