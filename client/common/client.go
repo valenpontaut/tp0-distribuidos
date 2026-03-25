@@ -40,10 +40,7 @@ func NewClient(config ClientConfig) *Client {
 // failure, error is printed in stdout/stderr and exit 1
 // is returned
 func (c *Client) createClientSocket() error {
-	const maxRetries = 5
-	const retryDelay = time.Second
-
-	for i := 1; i <= maxRetries; i++ {
+	for i := 1; i <= c.config.LoopAmount; i++ {
 		conn, err := net.Dial("tcp", c.config.ServerAddress)
 		if err == nil {
 			c.conn = conn
@@ -51,12 +48,12 @@ func (c *Client) createClientSocket() error {
 		}
 		log.Warningf(
 			"action: connect | result: fail | client_id: %v | attempt: %v/%v | error: %v",
-			c.config.ID, i, maxRetries, err,
+			c.config.ID, i, c.config.LoopAmount, err,
 		)
-		time.Sleep(retryDelay)
+		time.Sleep(c.config.LoopPeriod)
 	}
 	log.Criticalf("action: connect | result: fail | client_id: %v | error: max retries exceeded", c.config.ID)
-	return fmt.Errorf("could not connect to server after %d attempts", maxRetries)
+	return fmt.Errorf("could not connect to server after %d attempts", c.config.LoopAmount)
 }
 
 // StartClientLoop Send messages to the client until some time threshold is met
