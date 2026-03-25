@@ -1,6 +1,8 @@
 import socket
 import logging
 import signal
+from common.protocol import recv_bet, send_confirmation
+from common.utils import Bet, store_bets
 
 
 class Server:
@@ -46,14 +48,15 @@ class Server:
         client socket will also be closed
         """
         try:
-            # TODO: Modify the receive to avoid short-reads
-            msg = client_sock.recv(1024).rstrip().decode('utf-8')
-            addr = client_sock.getpeername()
-            logging.info(f'action: receive_message | result: success | ip: {addr[0]} | msg: {msg}')
-            # TODO: Modify the send to avoid short-writes
-            client_sock.send("{}\n".format(msg).encode('utf-8'))
+            bet_info = recv_bet(client_sock)
+            bet = Bet(bet_info.agency, bet_info.nombre, bet_info.apellido,
+                      bet_info.dni, bet_info.nacimiento, bet_info.numero)
+            store_bets([bet])
+
+            logging.info(f'action: apuesta_almacenada | result: success | dni: {bet_info.dni} | numero: {bet_info.numero}')
+            send_confirmation(client_sock, "OK")
         except OSError as e:
-            logging.error("action: receive_message | result: fail | error: {e}")
+            logging.error(f"action: apuesta_almacenada | result: fail | error: {e}")
         finally:
             client_sock.close()
 
