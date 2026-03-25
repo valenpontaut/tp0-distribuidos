@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"os/signal"
@@ -39,17 +40,23 @@ func NewClient(config ClientConfig) *Client {
 // failure, error is printed in stdout/stderr and exit 1
 // is returned
 func (c *Client) createClientSocket() error {
-	conn, err := net.Dial("tcp", c.config.ServerAddress)
-	if err != nil {
-		log.Criticalf(
-			"action: connect | result: fail | client_id: %v | error: %v",
-			c.config.ID,
-			err,
+	const maxRetries = 5
+	const retryDelay = time.Second
+
+	for i := 1; i <= maxRetries; i++ {
+		conn, err := net.Dial("tcp", c.config.ServerAddress)
+		if err == nil {
+			c.conn = conn
+			return nil
+		}
+		log.Warningf(
+			"action: connect | result: fail | client_id: %v | attempt: %v/%v | error: %v",
+			c.config.ID, i, maxRetries, err,
 		)
-		return err
+		time.Sleep(retryDelay)
 	}
-	c.conn = conn
-	return nil
+	log.Criticalf("action: connect | result: fail | client_id: %v | error: max retries exceeded", c.config.ID)
+	return fmt.Errorf("could not connect to server after %d attempts", maxRetries)
 }
 
 // StartClientLoop Send messages to the client until some time threshold is met
