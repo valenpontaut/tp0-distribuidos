@@ -13,6 +13,7 @@
   - [Ejercicio 4](#ejercicio-4)
 - [Parte 2: Repaso de Comunicaciones](#parte-2-repaso-de-comunicaciones)
   - [Ejercicio 5](#ejercicio-5)
+  - [Ejercicio 6](#ejercicio-6)
 
 ## Parte 1: Introducción a Docker
 
@@ -171,4 +172,45 @@ Recibe la apuesta, construye un objeto `Bet` con los campos deserializados y lo 
 Al persistir la apuesta se imprime:
 ```
 action: apuesta_almacenada | result: success | dni: ${DNI} | numero: ${NUMERO}
+```
+
+### Ejercicio 6
+
+Se modificó el cliente para enviar apuestas en batches y el servidor para recibirlas y almacenarlas en conjunto.
+
+#### Lectura del CSV por streaming
+
+Cada cliente lee su archivo `.data/agency-{ID}.csv` (montado como volumen) usando `AgencyReader`, que mantiene el archivo abierto y expone un método `NextBatch(maxAmount)`. Esto carga en memoria como máximo `maxAmount` apuestas a la vez, evitando cargar el CSV completo.
+
+La validación de cada fila (DNI y número como enteros, nacimiento en formato `YYYY-MM-DD`) se centraliza en `NewBetInfo`, invocada por el reader al parsear cada registro. Las filas inválidas se saltean con un log de advertencia.
+
+#### Protocolo de batch
+
+El formato del mensaje se extendió para soportar múltiples apuestas en un único envío:
+
+```
+[ 4 bytes: largo total del payload ][ payload ]
+```
+
+El payload es un string flat con todos los campos separados por `|`:
+
+```
+clientID|nombre|apellido|dni|nacimiento|numero|nombre|apellido|...
+```
+
+El `clientID` aparece una sola vez al inicio. El servidor splitea por `|`, toma el primer campo como agencia y agrupa los restantes de a 5 para reconstruir cada apuesta.
+
+El payload se envía en chunks de máximo 8KB para evitar writes muy grandes, sin que el servidor necesite conocer este detalle.
+
+#### Fin de sesión con EOF explícito
+
+Al terminar de enviar todos los batches, el cliente envía un mensaje `"EOF"` usando el mismo protocolo length-prefixed. El servidor detecta el payload `"EOF"` y cierra la conexión limpiamente. Si el cliente es interrumpido antes (SIGTERM), el servidor atrapa el `OSError` resultante y también sale del loop sin errores.
+
+#### Configuración
+
+La cantidad máxima de apuestas por batch se configura con la clave `batch.maxAmount` en `config.yaml`. El valor por defecto es `100`.
+
+Al confirmar cada batch el servidor imprime:
+```
+action: apuesta_recibida | result: success | cantidad: ${CANTIDAD}
 ```
