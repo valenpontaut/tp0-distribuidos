@@ -14,6 +14,7 @@
 - [Parte 2: Repaso de Comunicaciones](#parte-2-repaso-de-comunicaciones)
   - [Ejercicio 5](#ejercicio-5)
   - [Ejercicio 6](#ejercicio-6)
+  - [Ejercicio 7](#ejercicio-7)
 
 ## Parte 1: Introducción a Docker
 
@@ -214,3 +215,41 @@ Al confirmar cada batch el servidor imprime:
 ```
 action: apuesta_recibida | result: success | cantidad: ${CANTIDAD}
 ```
+
+### Ejercicio 7
+
+Se extendió el protocolo para implementar el sorteo y la consulta de ganadores.
+
+#### Protocolo extendido
+
+Se agregaron dos nuevos tipos de mensaje al protocolo length-prefixed existente, diferenciados por el contenido del payload:
+
+- `"EOF"`: ya existía en ej6, ahora además dispara la lógica de sorteo en el servidor
+- `"WINNERS|{agencyID}"`: consulta de ganadores para una agencia específica
+
+El servidor identifica el tipo de mensaje en `recv_message` y despacha al handler correspondiente.
+
+#### Flujo del cliente
+
+El cliente opera en dos fases sobre dos conexiones TCP distintas:
+
+1. **Fase 1** (igual que ej6): envía todos los batches y finaliza con `"EOF"`. La conexión se cierra al terminar.
+2. **Fase 2**: abre una nueva conexión y entra en un loop consultando ganadores. Si el servidor responde `"WAIT"` (el sorteo aún no ocurrió), espera `loop.period` y reintenta. Cuando recibe la lista de DNIs, loguea:
+
+```
+action: consulta_ganadores | result: success | cant_ganadores: ${CANT}
+```
+
+#### Flujo del servidor
+
+El servidor lleva un conjunto `_agencies_done` con las agencias que enviaron EOF. Al recibir el EOF de la última agencia esperada realiza el sorteo y loguea:
+
+```
+action: sorteo | result: success
+```
+
+Antes del sorteo, cualquier consulta de ganadores recibe `"WAIT"` como respuesta. Una vez realizado, el servidor filtra las apuestas de la agencia solicitada con `load_bets()` y `has_won()` y responde con los DNIs ganadores separados por `|` (payload vacío si no hay ganadores).
+
+#### Configuración
+
+La cantidad de agencias que el servidor espera antes de realizar el sorteo se configura mediante la variable de entorno `SERVER_CLIENTS_TOTAL`, que el compose generator inyecta automáticamente según la cantidad de clientes definida al generar el compose.

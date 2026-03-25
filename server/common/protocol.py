@@ -4,15 +4,22 @@ from common.bet import BetInfo
 HEADER_SIZE = 4
 
 
-def recv_batch(sock):
-    """Receives a length-prefixed batch message and returns a list of BetInfo.
-    Returns None if the client sent an EOF signal indicating it is done."""
+def recv_message(sock):
+    """Receives a length-prefixed message and returns one of:
+    - None: EOF received, client is done sending bets
+    - ["WINNERS", agency_id]: winner query for agency_id
+    - list[BetInfo]: a batch of bets
+    """
     header = recv_all(sock, HEADER_SIZE)
     length = struct.unpack('!I', header)[0]
     payload = recv_all(sock, length).decode('utf-8')
 
     if payload == "EOF":
         return None
+
+    if payload.startswith("WINNERS|"):
+        agency_id = payload.split("|")[1]
+        return ["WINNERS", agency_id]
 
     fields = payload.split('|')
     agency = fields[0]
@@ -31,6 +38,14 @@ def send_confirmation(sock, message: str):
     header = struct.pack('!I', len(data))
     send_all(sock, header)
     send_all(sock, data)
+
+
+def send_winners(sock, dnis: list):
+    """Sends a length-prefixed list of winner DNIs separated by '|'."""
+    payload = "|".join(dnis).encode('utf-8')
+    header = struct.pack('!I', len(payload))
+    send_all(sock, header)
+    send_all(sock, payload)
 
 
 def send_all(sock, data: bytes):

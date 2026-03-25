@@ -1,17 +1,19 @@
 import socket
 import logging
 import signal
-from common.protocol import recv_batch, send_confirmation
-from common.utils import Bet, store_bets
-
+from common.protocol import recv_message, send_confirmation, send_winners
+from common.utils import Bet, store_bets, load_bets, has_won
 
 class Server:
-    def __init__(self, port, listen_backlog):
+    def __init__(self, port, listen_backlog, clients_total):
         # Initialize server socket
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.bind(('', port))
         self._server_socket.listen(listen_backlog)
         self._running = True
+        self._agencies_done = set()
+        self._sorteo_done = False
+        self._clients_total = clients_total
         signal.signal(signal.SIGTERM, self.__handle_sigterm)
 
     def __handle_sigterm(self, _signum, _frame):
@@ -24,14 +26,6 @@ class Server:
             logging.error(f"action: shutdown | result: fail | error: {e}")
 
     def run(self):
-        """
-        Dummy Server loop
-
-        Server that accept a new connections and establishes a
-        communication with a client. After client with communucation
-        finishes, servers starts to accept new connections again
-        """
-
         while self._running:
             try:
                 client_sock = self.__accept_new_connection()
@@ -39,46 +33,56 @@ class Server:
             except OSError:
                 break
 
-
     def __handle_client_connection(self, client_sock):
-        """
-        Read message from a specific client socket and closes the socket
-
-        If a problem arises in the communication with the client, the
-        client socket will also be closed
-        """
+        agency_id = None
         try:
             while True:
                 try:
-                    bets_info = recv_batch(client_sock)
+                    msg = recv_message(client_sock)
                 except OSError:
-                    logging.warning("action: recv_batch | result: client disconnected unexpectedly")
+                    logging.warning("action: recv_message | result: client disconnected unexpectedly")
                     break
 
-                if bets_info is None:
+                if msg is None:
+                    if agency_id:
+                        self.__handle_eof(agency_id)
                     break
 
-                bets = [Bet(b.agency, b.nombre, b.apellido, b.dni, b.nacimiento, b.numero)
-                        for b in bets_info]
-                try:
-                    store_bets(bets)
-                    logging.info(f'action: apuesta_recibida | result: success | cantidad: {len(bets)}')
-                    send_confirmation(client_sock, "OK")
-                except Exception as e:
-                    logging.error(f'action: apuesta_recibida | result: fail | cantidad: {len(bets)} | error: {e}')
-                    send_confirmation(client_sock, "ERROR")
+                if msg[0] == "WINNERS":
+                    self.__handle_winners_query(client_sock, msg[1])
+                    break
+
+                agency_id = msg[0].agency
+                self.__handle_batch(client_sock, msg)
         finally:
             client_sock.close()
 
+    def __handle_batch(self, client_sock, bets_info):
+        bets = [Bet(b.agency, b.nombre, b.apellido, b.dni, b.nacimiento, b.numero)
+                for b in bets_info]
+        try:
+            store_bets(bets)
+            logging.info(f'action: apuesta_recibida | result: success | cantidad: {len(bets)}')
+            send_confirmation(client_sock, "OK")
+        except Exception as e:
+            logging.error(f'action: apuesta_recibida | result: fail | cantidad: {len(bets)} | error: {e}')
+            send_confirmation(client_sock, "ERROR")
+
+    def __handle_eof(self, agency_id):
+        self._agencies_done.add(agency_id)
+        if len(self._agencies_done) == self._clients_total:
+            logging.info("action: sorteo | result: success")
+            self._sorteo_done = True
+
+    def __handle_winners_query(self, client_sock, agency_id):
+        if not self._sorteo_done:
+            send_confirmation(client_sock, "WAIT")
+            return
+        winners = [bet.document for bet in load_bets()
+                   if str(bet.agency) == str(agency_id) and has_won(bet)]
+        send_winners(client_sock, winners)
+
     def __accept_new_connection(self):
-        """
-        Accept new connections
-
-        Function blocks until a connection to a client is made.
-        Then connection created is printed and returned
-        """
-
-        # Connection arrived
         logging.info('action: accept_connections | result: in_progress')
         c, addr = self._server_socket.accept()
         logging.info(f'action: accept_connections | result: success | ip: {addr[0]}')
