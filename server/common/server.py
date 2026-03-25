@@ -4,11 +4,8 @@ import signal
 from common.protocol import recv_message, send_confirmation, send_winners
 from common.utils import Bet, store_bets, load_bets, has_won
 
-TOTAL_AGENCIES = 5
-
-
 class Server:
-    def __init__(self, port, listen_backlog):
+    def __init__(self, port, listen_backlog, clients_total):
         # Initialize server socket
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.bind(('', port))
@@ -16,6 +13,7 @@ class Server:
         self._running = True
         self._agencies_done = set()
         self._sorteo_done = False
+        self._clients_total = clients_total
         signal.signal(signal.SIGTERM, self.__handle_sigterm)
 
     def __handle_sigterm(self, _signum, _frame):
@@ -72,7 +70,7 @@ class Server:
 
     def __handle_eof(self, agency_id):
         self._agencies_done.add(agency_id)
-        if len(self._agencies_done) == TOTAL_AGENCIES:
+        if len(self._agencies_done) == self._clients_total:
             logging.info("action: sorteo | result: success")
             self._sorteo_done = True
 
