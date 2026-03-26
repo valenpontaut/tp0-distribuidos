@@ -1,6 +1,7 @@
 import socket
 import logging
 import signal
+import threading
 from common.protocol import recv_message, send_confirmation, send_winners
 from common.utils import Bet, store_bets, load_bets, has_won
 
@@ -12,8 +13,10 @@ class Server:
         self._server_socket.listen(listen_backlog)
         self._running = True
         self._agencies_done = set()
-        self._sorteo_done = False
         self._clients_total = clients_total
+        self._sorteo_done = False
+        self._sorteo_cv = threading.Condition()
+        self._store_lock = threading.Lock()
         signal.signal(signal.SIGTERM, self.__handle_sigterm)
 
     def __handle_sigterm(self, _signum, _frame):
@@ -29,7 +32,8 @@ class Server:
         while self._running:
             try:
                 client_sock = self.__accept_new_connection()
-                self.__handle_client_connection(client_sock)
+                thread = threading.Thread(target=self.__handle_client_connection, args=(client_sock,))
+                thread.start()
             except OSError:
                 break
 
@@ -61,7 +65,8 @@ class Server:
         bets = [Bet(b.agency, b.nombre, b.apellido, b.dni, b.nacimiento, b.numero)
                 for b in bets_info]
         try:
-            store_bets(bets)
+            with self._store_lock:
+                store_bets(bets)
             logging.info(f'action: apuesta_recibida | result: success | cantidad: {len(bets)}')
             send_confirmation(client_sock, "OK")
         except Exception as e:
@@ -69,15 +74,16 @@ class Server:
             send_confirmation(client_sock, "ERROR")
 
     def __handle_eof(self, agency_id):
-        self._agencies_done.add(agency_id)
-        if len(self._agencies_done) == self._clients_total:
-            logging.info("action: sorteo | result: success")
-            self._sorteo_done = True
+        with self._sorteo_cv:
+            self._agencies_done.add(agency_id)
+            if len(self._agencies_done) == self._clients_total:
+                logging.info("action: sorteo | result: success")
+                self._sorteo_done = True
+                self._sorteo_cv.notify_all()
 
     def __handle_winners_query(self, client_sock, agency_id):
-        if not self._sorteo_done:
-            send_confirmation(client_sock, "WAIT")
-            return
+        with self._sorteo_cv:
+            self._sorteo_cv.wait_for(lambda: self._sorteo_done)
         winners = [bet.document for bet in load_bets()
                    if str(bet.agency) == str(agency_id) and has_won(bet)]
         send_winners(client_sock, winners)

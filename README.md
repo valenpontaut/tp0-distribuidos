@@ -15,6 +15,8 @@
   - [Ejercicio 5](#ejercicio-5)
   - [Ejercicio 6](#ejercicio-6)
   - [Ejercicio 7](#ejercicio-7)
+- [Parte 3: Repaso de Concurrencia](#parte-3-repaso-de-concurrencia)
+  - [Ejercicio 8](#ejercicio-8)
 
 ## Parte 1: Introducción a Docker
 
@@ -253,3 +255,40 @@ Antes del sorteo, cualquier consulta de ganadores recibe `"WAIT"` como respuesta
 #### Configuración
 
 La cantidad de agencias que el servidor espera antes de realizar el sorteo se configura mediante la variable de entorno `SERVER_CLIENTS_TOTAL`, que el compose generator inyecta automáticamente según la cantidad de clientes definida al generar el compose.
+
+## Parte 3: Repaso de Concurrencia
+
+### Ejercicio 8
+
+Se modificó el servidor para aceptar y procesar conexiones en paralelo mediante `threading`.
+
+#### Modelo de concurrencia
+
+El hilo principal queda bloqueado en `accept()`. Por cada conexión entrante lanza un `threading.Thread` que ejecuta `__handle_client_connection`. De esta forma múltiples clientes pueden enviar sus batches simultáneamente sin esperar a que el anterior termine.
+
+#### Sincronización
+
+Se identificaron dos recursos compartidos que requieren protección:
+
+- **`store_bets()`**: protegido con un `threading.Lock` (`_store_lock`). Múltiples threads pueden recibir batches en paralelo y escribir al archivo simultáneamente sin este lock.
+- **`_agencies_done` y `_sorteo_done`**: protegidos con un `threading.Condition` (`_sorteo_cv`). El `Condition` tiene un lock interno, por lo que hacer `with self._sorteo_cv` garantiza exclusión mutua sobre ambas variables.
+
+Una variable de condición permite que un thread espere hasta que otro señalice que cierta condición se cumplió, sin hacer busy wait. Internamente combina un lock con una cola de threads dormidos:
+
+- El thread que espera adquiere el lock, evalúa el predicate, y si es falso libera el lock atómicamente y se duerme en la cola. Al recibir una notificación, re-adquiere el lock y re-evalúa el predicate antes de continuar (para manejar spurious wakeups).
+- El thread que notifica adquiere el lock, actualiza el estado compartido, y llama `notify_all()` para despertar a todos los threads en la cola.
+
+El flujo de sincronización del sorteo es:
+
+1. Cada thread de EOF llama `__handle_eof`, que bajo el lock agrega la agencia al set y, si llegaron todas, pone `_sorteo_done = True` y llama `notify_all()`.
+2. Los threads de winner query llaman `wait_for(lambda: self._sorteo_done)`, que libera el lock y duerme el thread (sin busy wait) hasta recibir la notificación. Al despertar, re-adquiere el lock, verifica el predicate, y continúa si es True.
+
+Si el sorteo ya ocurrió antes de que un thread llegue al `wait_for`, el predicate es True desde el inicio y retorna inmediatamente sin bloquearse.
+
+#### Simplificación del cliente
+
+Con el servidor bloqueante, el cliente ya no necesita el loop de WAIT/retry de ej7. `queryWinners` pasa a ser una única conexión: envía la consulta y espera la respuesta, que llegará cuando el servidor termine el sorteo.
+
+#### Arquitectura final del sistema
+
+![Arquitectura final del sistema](diagram.png)
