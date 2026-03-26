@@ -288,3 +288,7 @@ Si el sorteo ya ocurrió antes de que un thread llegue al `wait_for`, el predica
 #### Simplificación del cliente
 
 Con el servidor bloqueante, el cliente ya no necesita el loop de WAIT/retry de ej7. `queryWinners` pasa a ser una única conexión: envía la consulta y espera la respuesta, que llegará cuando el servidor termine el sorteo.
+
+#### Arquitectura final del sistema
+
+![Arquitectura final del sistema](diagram.png)
